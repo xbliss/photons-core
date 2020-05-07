@@ -2,9 +2,30 @@ from photons_protocol.errors import BadConversion
 from photons_protocol.types import Optional
 
 from delfick_project.norms import sb, dictobj
+from collections import defaultdict
 from bitarray import bitarray
+from lru import LRU
 import binascii
 import struct
+
+
+packers = {}
+pack_cache = defaultdict(lambda: LRU(0xFFFF))
+unpack_cache = defaultdict(lambda: LRU(0xFFFF))
+
+
+def pack(fmt, val):
+    pk = packers.get(fmt)
+    if pk is None:
+        pk = packers[fmt] = struct.Struct(fmt)
+    return pk.pack(val)
+
+
+def unpack(fmt, val):
+    pk = packers.get(fmt)
+    if pk is None:
+        pk = packers[fmt] = struct.Struct(fmt)
+    return pk.unpack(val)
 
 
 def val_to_bitarray(val, doing):
@@ -26,8 +47,13 @@ def val_to_bitarray(val, doing):
     return b
 
 
-class BitarraySlice(dictobj):
-    fields = ["name", "typ", "val", "size_bits", "group"]
+class BitarraySlice:
+    def __init__(self, name, typ, val, size_bits, group):
+        self.typ = typ
+        self.val = val
+        self.name = name
+        self.group = group
+        self.size_bits = size_bits
 
     @property
     def fmt(self):
@@ -53,7 +79,14 @@ class BitarraySlice(dictobj):
                 val = val + padding
 
         try:
-            return struct.unpack(typ.struct_format, val.tobytes())[0]
+            fmt = typ.struct_format
+            val = val.tobytes()
+            key = (fmt, val)
+            v = unpack_cache.get(key)
+            if v is None:
+                v = unpack(fmt, val)[0]
+                unpack_cache[key] = v
+            return v
         except (struct.error, TypeError, ValueError) as error:
             raise BadConversion(
                 "Failed to unpack field",
@@ -65,8 +98,13 @@ class BitarraySlice(dictobj):
             )
 
 
-class FieldInfo(dictobj):
-    fields = ["name", "typ", "val", "size_bits", "group"]
+class FieldInfo:
+    def __init__(self, name, typ, val, size_bits, group):
+        self.typ = typ
+        self.val = val
+        self.name = name
+        self.group = group
+        self.size_bits = size_bits
 
     @property
     def value(self):
@@ -104,6 +142,14 @@ class FieldInfo(dictobj):
         if type(val) is bitarray:
             return val
 
+        key = (fmt, val)
+        c = pack_cache.get(key)
+        if c is None:
+            c = self._to_bitarray(fmt, val)
+            pack_cache[key] = c
+        return c
+
+    def _to_bitarray(self, fmt, val):
         if type(fmt) is str:
             return self.struct_format(fmt, val)
 
@@ -129,7 +175,7 @@ class FieldInfo(dictobj):
         try:
             if val is Optional:
                 val = 0
-            b.frombytes(struct.pack(fmt, val))
+            b.frombytes(pack(fmt, val))
         except struct.error as error:
             raise BadConversion(
                 "Failed trying to convert a value",
@@ -198,20 +244,19 @@ class PacketPacking(object):
             val = value[i : i + size_bits]
             i += size_bits
 
-            if multiple:
-                if typ.struct_format:
-                    res = []
-                    j = 0
-                    for _ in range(multiple):
-                        v = val[j : j + single_size_bits]
-                        j += single_size_bits
-                        info = BitarraySlice(name, typ, v, single_size_bits, pkt_kls.__name__)
-                        res.append(info.unpackd)
-                    val = res
-                final[name] = val
-            else:
-                info = BitarraySlice(name, typ, val, size_bits, pkt_kls.__name__)
-                dictobj.__setitem__(final, info.name, info.unpackd)
+            if multiple and typ.struct_format:
+                j = 0
+                res = []
+                for _ in range(multiple):
+                    v = val[j : j + single_size_bits]
+                    j += single_size_bits
+                    info = BitarraySlice(name, typ, v, single_size_bits, pkt_kls.__name__)
+                    res.append(info.unpackd)
+                final[name] = res
+                continue
+
+            info = BitarraySlice(name, typ, val, size_bits, pkt_kls.__name__)
+            dictobj.__setitem__(final, info.name, info.unpackd)
         return final, i
 
     @classmethod

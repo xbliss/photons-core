@@ -30,6 +30,7 @@ from photons_app.errors import ProgrammerError
 from delfick_project.norms import dictobj, sb, Meta
 from bitarray import bitarray
 from functools import partial
+import itertools
 import binascii
 import logging
 import json
@@ -403,8 +404,12 @@ class PacketSpecMixin:
 
         # Set all the keys but those found in the payload
         # Because we get all_names from the payload, we are ignoring those in the actual payload
-        for key in parent.Meta.all_names:
-            final[key] = self.__getitem__(key, serial=serial, parent=self)
+        for key, value in self.actual_items():
+            if key in parent.Meta.all_names:
+                if key in ("size", "pkt_type"):
+                    if value is sb.NotSpecified:
+                        value = self[key]
+                dictobj.__setitem__(final, key, value)
 
         # And set our packed payload
         final[last_group_name] = self[last_group_name].pack(parent=self, serial=serial)
@@ -614,4 +619,22 @@ class PacketSpecMetaKls(dictobj.Field.metaclass):
         return kls
 
 
-dictobj.PacketSpec = type.__new__(PacketSpecMetaKls, "PacketSpec", (PacketSpecMixin, dictobj), {})
+class NaiveDictobj(dictobj):
+    def setup(self, *args, **kwargs):
+        if not kwargs:
+            for (key, dflt), val in itertools.zip_longest(
+                self.fields, args, fillvalue=sb.NotSpecified
+            ):
+                if val is sb.NotSpecified:
+                    val = dflt()
+                setattr(self, key, val)
+            return
+
+        for key, dflt in self.fields:
+            val = kwargs.get(key, dflt())
+            setattr(self, key, val)
+
+
+dictobj.PacketSpec = type.__new__(
+    PacketSpecMetaKls, "PacketSpec", (PacketSpecMixin, NaiveDictobj), {}
+)
