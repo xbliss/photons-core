@@ -1,0 +1,149 @@
+"""
+A theme is just a collection of colors and the job of the appliers is to choose
+how those colors are displayed on the device.
+
+.. autoclass:: photons_canvas.Theme
+    :members:
+"""
+from photons_canvas.canvas import CanvasColor
+
+import random
+
+
+class ZoneColors:
+    """
+    Representation of colors on a zone
+    """
+
+    def __init__(self):
+        self._colors = []
+
+    def add_hsbk(self, hsbk):
+        """
+        Add a CanvasColor instance
+
+        The idea is you use this function to add each zone in order.
+        """
+        self._colors.append(hsbk)
+
+    def apply_to_range(self, color, next_color, length):
+        """
+        Recursively apply two colours to our strip such that we blend between
+        the two colours.
+        """
+        if length == 1:
+            self.add_hsbk(color)
+
+        elif length == 2:
+            second_color = CanvasColor.average([next_color.limit_distance_to(color), color])
+
+            self.add_hsbk(color)
+            self.add_hsbk(second_color)
+
+        else:
+            average = CanvasColor.average([next_color, color])
+            self.apply_to_range(color, average, length // 2)
+            self.apply_to_range(average, next_color, length - length // 2)
+
+    def apply_theme(self, theme, zone_count):
+        """Apply a theme across zone_count zones"""
+        i = 0
+        location = 0
+        zones_per_color = max(1, int(zone_count / (max(len(theme) - 1, 1))))
+
+        while location < zone_count:
+            length = min(location + zones_per_color, zone_count) - location
+            self.apply_to_range(theme[i], theme.get_next_bounds_checked(i), length)
+            i = min(len(theme) - 1, i + 1)
+            location += zones_per_color
+
+    @property
+    def colors(self):
+        """
+        Return a list of ``((start_index, end_index), hsbk)`` for our colors.
+
+        This function will make sure that contiguous colors are returned with
+        an appropriate ``start_index``, ``end_index`` range.
+        """
+        start_index = 0
+        end_index = -1
+        current = None
+        result = []
+
+        for hsbk in self._colors:
+            if current is not None and current != hsbk:
+                result.append(((start_index, end_index), current))
+                start_index = end_index + 1
+
+            end_index += 1
+            current = hsbk
+
+        result.append(((start_index, end_index), current))
+        return result
+
+
+class TileColors:
+    """
+    A very simple wrapper around multiple tiles
+    """
+
+    def __init__(self):
+        self.tiles = []
+
+    def add_tile(self, hsbks):
+        """Add a list of 64 CanvasColor objects to represent the next tile"""
+        self.tiles.append(hsbks)
+
+
+class Theme:
+    """A wrapper around a list of CanvasColor objects"""
+
+    def __init__(self):
+        self.colors = []
+
+    def add_hsbk(self, hue, saturation, brightness, kelvin):
+        """Create a CanvasColor object and add it to our colors"""
+        self.colors.append(CanvasColor(hue, saturation, brightness, int(kelvin)))
+
+    def random(self):
+        """Return a random color from our array of colors"""
+        return random.choice(self.colors)
+
+    def __len__(self):
+        """Return the number of colors we have in this theme"""
+        return len(self.colors)
+
+    def __iter__(self):
+        """Iterate over the colors"""
+        return iter(self.colors)
+
+    def __contains__(self, color):
+        """Say whether this color is in the theme"""
+        return any(c == color for c in self)
+
+    def __getitem__(self, i):
+        """Return the color at this index"""
+        return self.colors[i]
+
+    def get_next_bounds_checked(self, i):
+        """
+        Return the next color after this index
+
+        If there is no next color, then return the last color
+        """
+        return self[i + 1] if i + 1 < len(self) else self[i]
+
+    def shuffled(self):
+        """
+        Return a new theme with the same colors but in a different order
+        """
+        new_theme = Theme()
+        colors = list(self.colors)
+        random.shuffle(colors)
+        new_theme.colors = colors
+        return new_theme
+
+    def ensure_color(self):
+        """Make sure we have atleast one colors"""
+        if not self.colors:
+            self.add_hsbk(0, 0, 1, 3500)

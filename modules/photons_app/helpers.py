@@ -482,6 +482,7 @@ class ResultStreamer:
 
             if self.final_future.done():
                 nxt.cancel()
+                await asyncio.wait([nxt])
                 return
 
             yield (await nxt)
