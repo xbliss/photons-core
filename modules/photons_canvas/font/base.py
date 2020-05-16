@@ -1,4 +1,4 @@
-from photons_canvas import Coord
+from photons_canvas import points_helpers as php
 
 from textwrap import dedent
 
@@ -7,61 +7,69 @@ def Space(width):
     return Character("_" * width)
 
 
-def character_color_func(characters, fill_color):
-    def get_color(x, y):
-        start = 0
-
-        char = None
-        for character in characters:
-            if start + character.width > x:
-                char = character
-                break
-            else:
-                start += character.width
-
-        if not char:
-            return
-
-        return char.color(x - start, y, fill_color)
-
-    return get_color
-
-
-def put_characters_on_canvas(canvas, characters, coords, fill_color=None, modify_point=None):
-    if not characters:
-        return
-
-    (left_x, _), (top_y, _), _ = coords.bounds
-    width = sum([character.width for character in characters])
-    height = max([character.height for character in characters])
-
-    canvas.set_all_points_for_coord(
-        Coord.simple(left_x, top_y, width, height),
-        character_color_func(characters, fill_color),
-        modify_point=modify_point,
-    )
-
-
 class Character:
     colors = {}
 
     def __init__(self, char):
         char = dedent(char).strip()
         self.rows = char.split("\n")
+
+        self.pixels = []
+        for row in self.rows:
+            self.pixels.extend(row)
+
         self.width = max([0, *[len(r) for r in self.rows]])
         self.height = len(self.rows)
 
-    def color(self, x, y, fill_color):
-        if y >= self.height:
-            return
+    def pairs(self, left_x, top_y, fill_color):
+        bounds = (
+            (left_x, left_x + self.width),
+            (top_y, top_y - self.height),
+            (self.width, self.height),
+        )
 
-        row = self.rows[y]
+        for point, pixel in zip(php.Points.rows(bounds), self.pixels):
+            if pixel == "#":
+                pixel = fill_color
+            elif pixel in self.colors:
+                pixel = self.colors[pixel]
+            else:
+                pixel = None
 
-        if x >= len(row):
-            return
+            yield point, pixel
 
-        pixel = row[x]
-        if pixel == "#":
-            return fill_color
-        elif pixel in self.colors:
-            return self.colors[pixel]
+    def apply(self, canvas, left_x, top_y, fill_color):
+        for point, pixel in self.pairs(left_x, top_y, fill_color):
+            canvas[point] = pixel
+
+    def layer(self, left_x, top_y, fill_color):
+        by_point = dict(self.pairs(left_x, top_y, fill_color))
+
+        def lay(point, canvas, parts):
+            return by_point.get(point)
+
+        return lay
+
+
+class Characters:
+    def __init__(self, *characters):
+        self.characters = characters
+
+    def pairs(self, left_x, top_y, fill_color):
+        for character in self.characters:
+            for point, pixel in character.pairs(left_x, top_y, fill_color):
+                yield point, pixel
+
+            left_x += character.width
+
+    def apply(self, canvas, left_x, top_y, fill_color):
+        for point, pixel in self.pairs(left_x, top_y, fill_color):
+            canvas[point] = pixel
+
+    def layer(self, left_x, top_y, fill_color):
+        by_point = dict(self.pairs(left_x, top_y, fill_color))
+
+        def lay(point, canvas, parts):
+            return by_point.get(point)
+
+        return lay

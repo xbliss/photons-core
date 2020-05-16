@@ -25,19 +25,10 @@ Animations
 .. automodule:: photons_canvas.animations
 """
 
-from photons_canvas.backgrounds import Background, background_spec
-from photons_canvas.canvas import Canvas, CanvasColor, GetColor
-from photons_canvas.coords import Coords, Rearranger, Coord
-from photons_canvas.themes import ApplyTheme
+from photons_canvas.points import helpers as point_helpers
+from photons_canvas.points.containers import Point
+from photons_canvas.points.canvas import Canvas
+from photons_canvas.points.color import Color
+from photons_canvas.theme import ApplyTheme
 
-__all__ = [
-    "Coord",
-    "Canvas",
-    "Coords",
-    "GetColor",
-    "Rearranger",
-    "ApplyTheme",
-    "Background",
-    "CanvasColor",
-    "background_spec",
-]
+__all__ = ["Color", "Canvas", "Point", "point_helpers", "ApplyTheme"]
