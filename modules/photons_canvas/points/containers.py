@@ -8,72 +8,10 @@ from photons_messages import LightMessages
 
 import random
 
-
-class Point:
-    __slots__ = ["col", "row", "key", "_hash"]
-
-    def __init__(self, col, row):
-        self.col = col
-        self.row = row
-        self.key = (col, row)
-        self._hash = hash(self.key)
-
-    def __repr__(self):
-        return f"<Point ({self.col},{self.row})>"
-
-    def __hash__(self):
-        return self._hash
-
-    def __eq__(self, other):
-        if isinstance(other, tuple) and other == self.key:
-            return True
-
-        if not any(hasattr(other, k) for k in ("row", "col")):
-            return False
-
-        return other.row == self.row and other.col == self.col
-
-    def __lt__(self, other):
-        if isinstance(other, tuple):
-            return self.key < other
-        else:
-            return self.key < other.key
-
-    def __iter__(self):
-        yield from self.key
-
-    @property
-    def bounds(self):
-        return (self.col, self.col), (self.row, self.row), (0, 0)
-
-    def relative(self, bounds):
-        (l, _), (t, _), _ = bounds
-        col = self.col - l
-        row = t - self.row
-        return Point(col, row)
+NO_MESSAGES = ()
 
 
 class Part:
-    __slots__ = [
-        "left",
-        "right",
-        "top",
-        "bottom",
-        "user_x",
-        "user_y",
-        "width",
-        "height",
-        "real_part",
-        "part_number",
-        "orientation",
-        "random_orientation",
-        "original_colors",
-        "device",
-        "_key",
-        "_hash",
-        "_points",
-    ]
-
     def __init__(
         self,
         user_x,
@@ -83,19 +21,35 @@ class Part:
         part_number,
         orientation,
         device,
+        colors=None,
         real_part=None,
         original_colors=None,
     ):
         self.device = device
         self.real_part = self if real_part is None else real_part
-        self.original_colors = original_colors
         self.orientation = orientation
         self.part_number = part_number
         self.update(user_x, user_y, width, height)
         self.random_orientation = random.choice(list(Orientation.__members__.values()))
 
+        self.colors = colors
+        self._original_colors = original_colors
+
         self._key = (self.device, self.part_number)
         self._hash = hash(self._key)
+
+        self._set_64 = Set64(
+            x=0,
+            y=0,
+            length=1,
+            tile_index=self.part_number,
+            colors=[],
+            duration=0,
+            ack_required=False,
+            width=self.width,
+            res_required=False,
+            target=self.device.serial,
+        )
 
     def __hash__(self):
         return self._hash
@@ -118,6 +72,16 @@ class Part:
     def __repr__(self):
         return f"<Part ({self.device.serial},{self.part_number})>"
 
+    @property
+    def original_colors(self):
+        return self._original_colors
+
+    @original_colors.setter
+    def original_colors(self, value):
+        self._original_colors = value
+        if value is not None and self.colors is None:
+            self.colors = list(value)
+
     def clone(self, *, user_x=None, user_y=None, width=None, height=None):
         ux = self.user_x if user_x is None else user_x
         uy = self.user_y if user_y is None else user_y
@@ -132,6 +96,7 @@ class Part:
             self.part_number,
             self.orientation,
             self.device,
+            colors=self.colors,
             real_part=self.real_part,
             original_colors=self.original_colors,
         )
@@ -175,32 +140,29 @@ class Part:
 
         return reorient(colors, o)
 
-    def msgs(self, colors, *, power_on=False, acks=False, duration=1, randomize=False):
-        if power_on:
-            yield LightMessages.SetLightPower(
-                target=self.device.serial, level=65535, duration=duration
-            )
+    def msgs(self, colors, *, acks=False, duration=1, randomize=False):
+        if colors == self.colors:
+            return NO_MESSAGES
+
+        self.colors = colors
 
         if self.device.cap.has_matrix:
             colors = [
                 c if c is not None else None for c in self.reorient(colors, randomize=randomize)
             ]
 
-            yield Set64(
-                x=0,
-                y=0,
-                length=1,
-                tile_index=self.part_number,
-                colors=colors,
-                ack_required=acks,
-                width=self.width,
-                duration=duration,
-                res_required=False,
-                target=self.device.serial,
-            )
+            kwargs = {"colors": colors}
+            if duration != 0:
+                kwargs["duration"] = duration
+            if acks:
+                kwargs["acks"] = acks
+
+            msg = self._set_64.clone()
+            msg.update(kwargs)
+            return (msg,)
 
         elif self.device.cap.has_multizone:
-            yield from MultizoneMessagesMaker(
+            return MultizoneMessagesMaker(
                 self.device.serial, self.device.cap, colors, duration=duration
             ).msgs
 
@@ -217,12 +179,10 @@ class Part:
                 info = colors[0].as_dict()
 
             info["duration"] = duration
-            yield LightMessages.SetColor(target=self.device.serial, res_required=False, **info)
+            return (LightMessages.SetColor(target=self.device.serial, res_required=False, **info),)
 
 
 class Device:
-    __slots__ = ["serial", "cap", "_hash"]
-
     def __init__(self, serial, cap):
         self.cap = cap
         self.serial = serial

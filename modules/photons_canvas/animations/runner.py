@@ -1,44 +1,53 @@
-from photons_canvas.animations.infrastructure.device import State, AnimationDevice
 from photons_canvas.animations.infrastructure.finish import Finish
 from photons_canvas.animations.run_options import make_run_options
+from photons_canvas.animations.infrastructure.state import State
 from photons_canvas.animations.infrastructure import cannons
+from photons_canvas import Canvas
 
 from photons_app.special import SpecialReference
 from photons_app.errors import FoundNoDevices
 from photons_app import helpers as hp
 
 from photons_messages import LightMessages
-from photons_products import Products
 
+from collections import defaultdict
 import logging
 import asyncio
 
 log = logging.getLogger("photons_canvas.animations.runner")
 
+from profiling.tracing import TracingProfiler
+from contextlib import contextmanager
+
+
+@contextmanager
+def profile(ignore=True):
+    profiler = None if ignore else TracingProfiler()
+    if profiler:
+        try:
+            with profiler:
+                yield
+        finally:
+            profiler.run_viewer()
+    else:
+        yield
+
 
 class AnimationRunner:
     def __init__(
-        self,
-        sender,
-        reference,
-        run_options,
-        *,
-        final_future,
-        known_serials=None,
-        animation_options=None,
-        **kwargs
+        self, sender, reference, run_options, *, final_future, animation_options=None, **kwargs
     ):
         self.sender = sender
         self.kwargs = kwargs
         self.reference = reference
         self.run_options = make_run_options(run_options, animation_options)
         self.final_future = hp.ChildOfFuture(final_future)
-        self.known_serials = known_serials
+        self.original_canvas = Canvas()
 
         self.collected = {}
 
-        if self.known_serials is None:
-            self.known_serials = set()
+        self.seen_serials = set()
+        self.used_serials = set()
 
     def make_cannon(self):
         if not self.run_options.noisy_network:
@@ -54,23 +63,28 @@ class AnimationRunner:
         cannon = self.make_cannon()
 
         animations = self.run_options.animations_iter
+        self.combined_state = State(self.final_future)
 
         async with self.reinstate(), hp.TaskHolder(self.final_future) as ts:
-            combined_state = State(self.final_future)
-            self.transfer_error(ts, ts.add(self.animate(ts, cannon, combined_state, animations)))
+            self.transfer_error(
+                ts, ts.add(self.animate(ts, cannon, self.combined_state, animations))
+            )
 
-            async for results in self.collect_devices(ts):
+            async for collected in self.collect_parts(ts):
                 try:
                     if self.run_options.combined:
-                        for device, chain in results:
-                            await combined_state.add_device(device, chain)
+                        await self.combined_state.add_collected(collected)
+                        # if len(self.combined_state.by_device) == 3:
+                        #     self.transfer_error(
+                        #         ts,
+                        #         ts.add(self.animate(ts, cannon, self.combined_state, animations)),
+                        #     )
                     else:
-                        for device, chain in results:
-                            state = State(self.final_future)
-                            await state.add_device(device, chain)
-                            self.transfer_error(
-                                ts, ts.add(self.animate(ts, cannon, state, animations)),
-                            )
+                        state = State(self.final_future)
+                        await state.add_collected(collected)
+                        self.transfer_error(
+                            ts, ts.add(self.animate(ts, cannon, state, animations)),
+                        )
                 except asyncio.CancelledError:
                     raise
                 except Finish:
@@ -80,7 +94,7 @@ class AnimationRunner:
 
     def transfer_error(self, ts, t):
         def process(res, fut):
-            if ts.pending == 0:
+            if ts.pending == 0 or len(self.combined_state.parts) == 0:
                 fut.cancel()
 
         try:
@@ -104,15 +118,29 @@ class AnimationRunner:
                 break
 
             animation = make_animation()
-            state.set_animation(animation, background)
+            await state.set_animation(animation, background)
 
-            async for messages in state.messages():
-                for serial, msgs in messages:
-                    ts.add(cannon.fire(ts, serial, msgs))
+            try:
+                with profile():
+                    async for messages in state.messages():
+                        by_serial = defaultdict(list)
+                        for msg in messages:
+                            by_serial[msg.serial].append(msg)
 
-    async def collect_devices(self, ts):
+                        for serial, msgs in by_serial.items():
+                            ts.add(cannon.fire(ts, serial, msgs))
+            except asyncio.CancelledError:
+                raise
+            except Finish:
+                pass
+            except Exception:
+                log.exception("Unexpected error running animation")
+
+    async def collect_parts(self, ts):
         async for _ in hp.tick(self.run_options.rediscover_every, final_future=self.final_future):
-            with hp.just_log_exceptions(log, reraise=[asyncio.CancelledError]):
+            with profile(ignore=True), hp.just_log_exceptions(
+                log, reraise=[asyncio.CancelledError]
+            ):
                 serials = self.reference
                 if isinstance(serials, str):
                     serials = [serials]
@@ -128,22 +156,31 @@ class AnimationRunner:
                         log.warning("Didn't find any devices")
                         continue
 
-                new = set(serials) - self.known_serials
+                new = set(serials) - self.seen_serials
                 if not new:
                     continue
 
-                result = []
+                devices = []
+                collected = []
+                async for device, parts in self.parts_from_serials(new):
+                    # Make sure the part isn't known by other animations currently running
+                    if device.serial not in self.used_serials:
+                        self.used_serials.add(device.serial)
+                        self.collected[device.serial] = parts
+                        devices.append(device)
 
-                async for device, chain in self.devices_from_serials(new):
-                    # Make sure the device isn't known by other animations currently running
-                    if device.serial not in self.known_serials:
-                        self.known_serials.add(device.serial)
-                        self.collected[device.serial] = device
-                        ts.add(self.turn_on(device.serial))
-                        result.append((device, chain))
+                        def process(res):
+                            if ts.pending == 0:
+                                self.final_future.cancel()
 
-                if result:
-                    yield result
+                        self.original_canvas.add_parts(*parts, with_colors=True)
+                        collected.append(parts)
+
+                yield collected
+
+                for device in devices:
+                    t = ts.add(self.turn_on(device.serial))
+                    t.add_done_callback(process)
 
     def reinstate(self):
         class CM:
@@ -153,11 +190,9 @@ class AnimationRunner:
             async def __aexit__(s, exc_typ, exc, tb):
                 if not self.run_options.reinstate_on_end:
                     return
-
-                msgs = []
-                for device in self.collected.values():
-                    msgs.extend(device.reinstate_messages)
-                await self.sender(msgs, message_timeout=1, errors=[])
+                await self.sender(
+                    list(self.original_canvas.restore_msgs()), message_timeout=1, errors=[]
+                )
 
         return CM()
 
@@ -165,30 +200,14 @@ class AnimationRunner:
         msg = LightMessages.SetLightPower(level=65535, duration=1)
         await self.sender(msg, serial, **self.kwargs)
 
-    async def devices_from_serials(self, serials):
-        tiles = {}
-        plans = self.sender.make_plans("chain", "capability")
+    async def parts_from_serials(self, serials):
+        plans = self.sender.make_plans("parts_and_colors")
         async for serial, _, info in self.sender.gatherer.gather_per_serial(
             plans, serials, **self.kwargs
         ):
-            if "capability" not in info or info["capability"]["product"] is not Products.LCM3_TILE:
-                self.known_serials.add(serial)
-                continue
-
-            if "chain" in info:
-                tiles[serial] = info["chain"]["chain"]
-
-        if not tiles:
-            return
-
-        plans = self.sender.make_plans("colors")
-        async for serial, _, colors in self.sender.gatherer.gather(
-            plans, list(tiles), **self.kwargs
-        ):
-            device = AnimationDevice(
-                serial,
-                colors,
-                tiles[serial],
-                reinstate_duration=self.run_options.reinstate_duration,
-            )
-            yield device, tiles[serial]
+            self.seen_serials.add(serial)
+            parts = info["parts_and_colors"]
+            if parts:
+                device = parts[0].device
+                if device.cap.has_chain:
+                    yield device, parts

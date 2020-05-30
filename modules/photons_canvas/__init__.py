@@ -25,10 +25,16 @@ Animations
 .. automodule:: photons_canvas.animations
 """
 
-from photons_canvas.points import helpers as point_helpers
-from photons_canvas.points.containers import Point
+from photons_canvas.points import helpers as point_helpers, rearrange
 from photons_canvas.points.canvas import Canvas
-from photons_canvas.points.color import Color
 from photons_canvas.theme import ApplyTheme
+from photons_canvas import font
 
-__all__ = ["Color", "Canvas", "Point", "point_helpers", "ApplyTheme"]
+__all__ = [
+    "Canvas",
+    "point_helpers",
+    "rearrange",
+    "ApplyTheme",
+    "Points",
+    "font",
+]

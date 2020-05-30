@@ -2,10 +2,10 @@
 
 from photons_app.actions import an_action
 
-from photons_canvas import CanvasColor, Canvas, Rearranger, Coords
-from photons_canvas.font import dice_8, put_characters_on_canvas
+from photons_canvas import Canvas, rearrange, font
 from photons_control.script import FromGenerator
 from photons_messages import DeviceMessages
+from photons_canvas.font import dice_8
 
 import logging
 
@@ -23,38 +23,35 @@ async def tile_dice(collector, target, reference, **kwargs):
     def e(error):
         log.error(error)
 
-    dice_color = CanvasColor(0, 0, 1, 3500)
-    rearranger = Rearranger(coords_separate=True)
-    characters = [dice_8[n] for n in ("1", "2", "3", "4", "5")]
-
     async def gen(reference, sender, **kwargs):
-        plans = sender.make_plans("capability", "chain")
-        async for serial, completed, info in sender.gatherer.gather_per_serial(
+        plans = sender.make_plans("parts")
+        async for serial, _, info in sender.gatherer.gather_per_serial(
             plans, reference, **kwargs
         ):
-            if not completed:
+            parts = info["parts"]
+            if not parts:
                 continue
 
-            if not info["capability"]["cap"].has_matrix:
-                continue
+            device = parts[0].device
 
-            canvas = Canvas()
+            if device.cap.has_chain:
+                canvas = Canvas()
+                canvas.add_parts(*parts, zero_color=(0, 0, 0, 3500))
+                
+                canvas = rearrange.rearrange(canvas, rearrange.Straight())
+                parts = canvas.parts
 
-            # Put the numbers on the device
-            coords = Coords()
-            coords.rearranger = rearranger
-            coords.add_device(serial, info["chain"]["chain"])
+                characters = font.Characters(*[dice_8[str(n+1)] for n in range(len(parts))])
+                characters.apply(canvas, 0, 0, (0, 0, 1, 3500))
 
-            put_characters_on_canvas(canvas, characters, coords, fill_color=dice_color)
+                def bottom(point, canvas, parts):
+                    for part in parts:
+                        _, row = point.relative(part.bounds)
+                        if row == part.height-1:
+                            return (0, 1, 0.2, 3500)
 
-            # Set bottom line to show which way up the dice are
-            for coord in coords:
-                for point in coord.points:
-                    if coord.top_y - point[1] == coord.height - 1:
-                        canvas[point] = CanvasColor(0, 1, 0.2, 3500)
-
-            yield DeviceMessages.SetPower(level=65535, res_required=False, target=serial)
-            yield canvas.messages_for(coords)[0]
+                yield DeviceMessages.SetPower(level=65535, target=device.serial)
+                yield list(canvas.msgs(bottom, canvas))
 
     await target.send(FromGenerator(gen), reference, error_catcher=e)
 

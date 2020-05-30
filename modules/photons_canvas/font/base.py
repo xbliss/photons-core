@@ -1,4 +1,4 @@
-from photons_canvas import points_helpers as php
+from photons_canvas.points import helpers as php
 
 from textwrap import dedent
 
@@ -28,7 +28,7 @@ class Character:
             (self.width, self.height),
         )
 
-        for point, pixel in zip(php.Points.rows(bounds), self.pixels):
+        for point, pixel in zip(php.Points.all_points(bounds), self.pixels):
             if pixel == "#":
                 pixel = fill_color
             elif pixel in self.colors:
@@ -40,12 +40,14 @@ class Character:
 
     def apply(self, canvas, left_x, top_y, fill_color):
         for point, pixel in self.pairs(left_x, top_y, fill_color):
-            canvas[point] = pixel
+            if pixel is not None or point in canvas:
+                canvas[point] = pixel
+        return canvas
 
     def layer(self, left_x, top_y, fill_color):
         by_point = dict(self.pairs(left_x, top_y, fill_color))
 
-        def lay(point, canvas, parts):
+        def lay(point, canvas):
             return by_point.get(point)
 
         return lay
@@ -64,12 +66,14 @@ class Characters:
 
     def apply(self, canvas, left_x, top_y, fill_color):
         for point, pixel in self.pairs(left_x, top_y, fill_color):
-            canvas[point] = pixel
+            if pixel is not None or point in canvas:
+                canvas[point] = pixel
+        return canvas
 
     def layer(self, left_x, top_y, fill_color):
         by_point = dict(self.pairs(left_x, top_y, fill_color))
 
-        def lay(point, canvas, parts):
+        def lay(point, canvas):
             return by_point.get(point)
 
         return lay

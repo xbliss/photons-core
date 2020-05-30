@@ -1,7 +1,7 @@
 from .base import Character
 
 dice_8 = {
-    "1": Character(
+    1: Character(
         """
       ________
       ________
@@ -13,7 +13,7 @@ dice_8 = {
       ________
       """
     ),
-    "2": Character(
+    2: Character(
         """
       ________
       ________
@@ -25,7 +25,7 @@ dice_8 = {
       ________
       """
     ),
-    "3": Character(
+    3: Character(
         """
       ________
       __#_____
@@ -37,7 +37,7 @@ dice_8 = {
       ________
       """
     ),
-    "4": Character(
+    4: Character(
         """
       ________
       ________
@@ -49,7 +49,7 @@ dice_8 = {
       ________
       """
     ),
-    "5": Character(
+    5: Character(
         """
       ________
       __#___#_
@@ -61,7 +61,7 @@ dice_8 = {
       ________
       """
     ),
-    "6": Character(
+    6: Character(
         """
       ________
       ________

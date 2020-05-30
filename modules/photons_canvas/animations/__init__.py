@@ -16,7 +16,9 @@ for d in ("features", "transitions"):
         if not filename.startswith("_") or os.path.isdir(location) or filename.endswith(".py"):
             if os.path.isfile(location):
                 filename = filename[:-3]
-            __import__(f"photons_canvas.animations.{d}.{filename}")
+
+            if d != "features" or filename in ("balls", "dice"):
+                __import__(f"photons_canvas.animations.{d}.{filename}")
 
 __all__ = [
     "register",

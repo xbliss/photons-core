@@ -25,14 +25,14 @@ class VerticalAlignment:
             yield part, part.real_part.clone(user_y=0)
 
 
-def rearrange(canvas, rearranger, keep_colors=True):
+def rearrange(canvas, rearranger, keep_colors=False):
     new = Canvas()
 
     parts = []
 
     for old_part, new_part in rearranger.rearrange(canvas):
         if keep_colors:
-            parts.append((new_part, [canvas[p] for p in old_part.points]))
+            parts.append((new_part, old_part.colors))
         else:
             parts.append(new_part)
 

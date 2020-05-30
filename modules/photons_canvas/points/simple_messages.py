@@ -8,8 +8,6 @@ messages every 0.075 seconds we can't make them fast enough.
 This file contains a more manual implementation of the Set64 message that tries
 to be as efficient as possible to allow us to keep up with the animation.
 """
-from photons_canvas.points import helpers as php
-
 from photons_messages import TileMessages, MultiZoneMessages
 from photons_protocol.packing import PacketPacking
 from photons_messages.fields import Color
@@ -20,7 +18,8 @@ import binascii
 import bitarray
 import struct
 
-ColorCache = LRU(8000)
+ColorCache = LRU(0xFFFF)
+
 TargetCache = LRU(1000)
 
 seed_set64 = TileMessages.Set64.empty_normalise(
@@ -39,6 +38,57 @@ seed_set64 = TileMessages.Set64.empty_normalise(
 )
 
 seed_set64_bytes = seed_set64.pack().tobytes()
+
+uint16_packer = struct.Struct("<H")
+uint32_packer = struct.Struct("<I")
+
+empty_color = struct.pack("<HHHH", 0, 0, 0, 0)
+
+ZERO = uint16_packer.pack(0)
+FULL = uint16_packer.pack(0xFFFF)
+
+
+def fill(color):
+    if color is None:
+        return empty_color
+
+    c = ColorCache.get(color)
+    if c is not None:
+        return c
+
+    h, s, b, k = color
+
+    if h <= 0:
+        hb = ZERO
+    elif h >= 0xFFFF:
+        hb = FULL
+    else:
+        hb = uint16_packer.pack(int(0xFFFF * (h / 360)))
+
+    if s <= 0:
+        sb = ZERO
+    elif s >= 0xFFFF:
+        sb = FULL
+    else:
+        sb = uint16_packer.pack(int(0xFFFF * s))
+
+    if b <= 0:
+        bb = ZERO
+    elif b >= 0xFFFF:
+        bb = FULL
+    else:
+        bb = uint16_packer.pack(int(0xFFFF * b))
+
+    if k <= 0:
+        kb = ZERO
+    elif k >= 0xFFFF:
+        kb = FULL
+    else:
+        kb = uint16_packer.pack(k)
+
+    c = hb + sb + bb + kb
+    ColorCache[color] = c
+    return c
 
 
 class Empty:
@@ -111,25 +161,25 @@ class Set64:
     @property
     def size(self):
         """returns the size of the total message."""
-        return struct.unpack("<H", self[0:2])[0]
+        return uint16_packer.unpack(self[0:2])[0]
 
     @size.setter
     def size(self, value):
-        self[0:2] = struct.pack("<H", value)
+        self[0:2] = uint16_packer.pack(value)
 
     @property
     def protocol(self):
         """returns the protocol version of the header."""
-        v = struct.unpack("<H", self[2:4])[0]
+        v = uint16_packer.unpack(self[2:4])[0]
         mask = 0b111111111111
         return v & mask
 
     @protocol.setter
     def protocol(self, value):
-        current = struct.unpack("<H", self[2:4])[0]
+        current = uint16_packer.unpack(self[2:4])[0]
         mask = 0b111111111111
         invmask = mask ^ 0xFFFF
-        self[2:4] = struct.pack("<H", current & invmask | value & mask)
+        self[2:4] = uint16_packer.pack(current & invmask | value & mask)
 
     @property
     def addressable(self):
@@ -168,12 +218,12 @@ class Set64:
         """returns then number used by clients to differentiate themselves from other clients"""
         if not self.set_source:
             return sb.NotSpecified
-        return struct.unpack("<I", self[4:8])[0]
+        return uint32_packer.unpack(self[4:8])[0]
 
     @source.setter
     def source(self, value):
         self.set_source = True
-        self[4:8] = struct.pack("<I", value)
+        self[4:8] = uint32_packer.pack(value)
 
     @property
     def serial(self):
@@ -244,11 +294,11 @@ class Set64:
     @property
     def pkt_type(self):
         """returns the Payload ID for the accompanying payload in the message."""
-        return struct.unpack("<H", self[32:34])[0]
+        return uint16_packer.unpack(self[32:34])[0]
 
     @pkt_type.setter
     def pkt_type(self, value):
-        self[32:34] = struct.pack("<H", value)
+        self[32:34] = uint16_packer.pack(value)
 
     @property
     def tile_index(self):
@@ -292,11 +342,11 @@ class Set64:
 
     @property
     def duration(self):
-        return struct.unpack("<I", self.payload[6:10])[0] / 1000
+        return uint32_packer.unpack(self.payload[6:10])[0] / 1000
 
     @duration.setter
     def duration(self, value):
-        self.payload[6:10] = struct.pack("<I", int(value * 1000))
+        self.payload[6:10] = uint32_packer.pack(int(value * 1000))
 
     @property
     def colors(self):
@@ -309,20 +359,10 @@ class Set64:
 
     @colors.setter
     def colors(self, colors):
-        for i, color in enumerate(colors):
-            key = php.hsbk(color)
-            c = ColorCache.get(key)
-
-            if not c:
-                h, s, b, k = key
-                h = min([max(0, h), 0xFFFF])
-                s = min([max(0, s), 0xFFFF])
-                b = min([max(0, b), 0xFFFF])
-                k = min([max(0, k), 0xFFFF])
-                c = struct.pack("<HHHH", int(65535 * (h / 360)), int(65535 * s), int(65535 * b), k)
-                ColorCache[key] = c
-
-            self.payload[10 + i * 8 : 18 + i * 8] = c
+        b = b""
+        for color in colors:
+            b += fill(color)
+        self.payload[10 : 18 + len(colors) * 8] = b
 
 
 class MultizoneMessagesMaker:
@@ -352,8 +392,6 @@ class MultizoneMessagesMaker:
         sections = []
 
         for i, color in enumerate(self.colors):
-            color = php.hsbk(color)
-
             i = i + self.zone_index
 
             if current is Empty:
@@ -371,21 +409,25 @@ class MultizoneMessagesMaker:
         if current is not Empty and (not sections or sections[-1][1] != i):
             sections.append([start, end, current])
 
+        msgs = []
         for start, end, color in sections:
             h, s, b, k = color
 
-            yield MultiZoneMessages.SetColorZones(
-                start_index=start,
-                end_index=end,
-                duration=self.duration,
-                ack_required=True,
-                res_required=False,
-                target=self.serial,
-                hue=h,
-                saturation=s,
-                brightness=b,
-                kelvin=k,
+            msgs.append(
+                MultiZoneMessages.SetColorZones(
+                    start_index=start,
+                    end_index=end,
+                    duration=self.duration,
+                    ack_required=True,
+                    res_required=False,
+                    target=self.serial,
+                    hue=h,
+                    saturation=s,
+                    brightness=b,
+                    kelvin=k,
+                )
             )
+        return msgs
 
     def make_new_messages(self):
         if not self.colors:
@@ -396,16 +438,18 @@ class MultizoneMessagesMaker:
             if isinstance(c, dict) or getattr(c, "is_dict", False):
                 colors.append(c)
             else:
-                colors.append(Color(*php.hsbk(c)))
+                colors.append(Color(*c))
 
-        yield MultiZoneMessages.SetExtendedColorZones(
-            duration=self.duration,
-            colors_count=len(self.colors),
-            colors=colors,
-            target=self.serial,
-            zone_index=self.zone_index,
-            ack_required=True,
-            res_required=False,
+        return (
+            MultiZoneMessages.SetExtendedColorZones(
+                duration=self.duration,
+                colors_count=len(self.colors),
+                colors=colors,
+                target=self.serial,
+                zone_index=self.zone_index,
+                ack_required=True,
+                res_required=False,
+            ),
         )
 
 

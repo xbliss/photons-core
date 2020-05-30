@@ -1,13 +1,13 @@
-from photons_canvas.points.msg_maker import MsgMaker
-from photons_canvas.points import containers as cont
-from photons_canvas.points.color import Color
+from photons_canvas.points import helpers as php
+
+from delfick_project.norms import sb
+from collections import defaultdict
 
 
 class Canvas:
     def __init__(self):
         self._parts = {}
 
-        self.parts = []
         self.points = {}
         self.devices = []
 
@@ -19,65 +19,119 @@ class Canvas:
         self.width = None
         self.height = None
 
-    @classmethod
-    def combine(kls, *canvases):
-        new = kls()
-
-        parts = []
-        for canvas in canvases:
-            for part in canvas.parts:
-                parts.append((part, [canvas[point] for point in part.points]))
-
-        new.add_parts(*parts)
-        return new
+        self.point_to_parts = defaultdict(set)
+        self.point_to_devices = defaultdict(set)
 
     def __getitem__(self, point):
-        color = self.points.get(point)
-        if color is None:
-            return color
-
-        if isinstance(color, tuple):
-            color = self.points[point] = self.color(*color)
-
-        return color
+        return self.points.get(point)
 
     def __setitem__(self, point, color):
         contained = point in self.points
         self.points[point] = color
 
         if not contained:
-            self.update_bounds([point])
+            self._update_bounds([point])
 
-    def __contains__(self, point):
-        return point in self.points
+    def __delitem__(self, point):
+        if point not in self.points:
+            return
+
+        del self.points[point]
+        self._update_bounds(self.points)
+
+    def __bool__(self):
+        return bool(self._parts) or bool(self.points)
 
     def __call__(self, point, canvas, parts):
         return self.points.get(point)
 
-    def pairs(self, convert=True):
-        for key in self.points:
-            if convert:
-                if isinstance(key, tuple):
-                    key = cont.Point(*key)
-                yield key, self[key]
-            else:
-                yield key, self.points[key]
+    @property
+    def parts(self):
+        return list(self._parts)
+
+    @property
+    def bounds(self):
+        return (self.left, self.right), (self.top, self.bottom), (self.width, self.height)
 
     def clone(self):
         new = self.__class__()
         new._parts.update(self._parts)
         new.points.update(self.points)
+        new.point_to_parts.update(self.point_to_parts)
+        new.point_to_devices.update(self.point_to_devices)
+
         if self.width is not None:
-            new.update_bounds([self.bounds])
+            new._update_bounds([self.bounds])
+
         return new
 
-    def color(self, hue, saturation, brightness, kelvin):
-        return Color(hue, saturation, brightness, kelvin)
+    def is_parts(self, hue=None, brightness=None, saturation=None, kelvin=None):
+        for part in self.parts:
+            for point in php.Points.all_points(part.bounds):
+                color = self[point]
+                if color is None:
+                    continue
+
+                h, s, b, k = color
+
+                if hue is not None and h != hue:
+                    return False
+                if saturation is not None and s != saturation:
+                    return False
+                if brightness is not None and b != brightness:
+                    return False
+                if kelvin is not None and k != kelvin:
+                    return False
+
+        return True
+
+    def override(
+        self, point, hue=None, saturation=None, brightness=None, kelvin=None,
+    ):
+        return php.Color.override(
+            self[point] or (0, 0, 0, 0),
+            hue=hue,
+            saturation=saturation,
+            brightness=brightness,
+            kelvin=kelvin,
+        )
+
+    def dim(self, point, change):
+        current = self.points.get(point)
+        if not current or current[2] == 0:
+            return None
+
+        b = current[2] - change
+        if b <= 0:
+            return None
+
+        return current[0], current[1], b, current[3]
+
+    def adjust(
+        self,
+        point,
+        hue_change=None,
+        saturation_change=None,
+        brightness_change=None,
+        kelvin_change=None,
+        ignore_empty=True,
+    ):
+        current = self.points.get(point)
+        if ignore_empty and current in php.Color.EMPTIES:
+            return None
+
+        return php.Color.adjust(
+            current or php.Color.ZERO,
+            hue_change=hue_change,
+            saturation_change=saturation_change,
+            brightness_change=brightness_change,
+            kelvin_change=kelvin_change,
+        )
 
     def restore_msgs(self, *, duration=1):
         for part in self.parts:
             if part.real_part and part.real_part.original_colors:
-                yield from part.msgs(
+                yield from part.real_part.msgs(
                     part.real_part.original_colors,
                     power_on=False,
                     duration=duration,
@@ -85,29 +139,55 @@ class Canvas:
                     randomize=False,
                 )
 
-    def msgs(self, *layers, average=False, acks=False, duration=1, randomize=False):
-        yield from MsgMaker(self).msgs(
-            layers, average=average, acks=acks, duration=duration, randomize=randomize
-        )
+    def msgs(self, layer, acks=False, duration=1, randomize=False, onto=None):
+        msgs = []
+        cache = {}
 
-    @property
-    def bounds(self):
-        return (self.left, self.right), (self.top, self.bottom), (self.width, self.height)
+        for part in self.parts:
+            cs = []
+            for point in part.points:
+                c = cache.get(point)
 
-    def add_parts(self, *parts):
+                if c is None:
+                    c = layer(point, self)
+
+                    if onto:
+                        onto[point] = c
+
+                    cache[point] = c
+
+                cs.append(c)
+
+            for msg in part.msgs(cs, acks=acks, duration=duration, randomize=randomize):
+                msgs.append(msg)
+
+        return msgs
+
+    def add_parts(self, *parts, with_colors=False, zero_color=sb.NotSpecified):
         for part in parts:
             colors = None
+
             if isinstance(part, tuple):
                 part, colors = part
+
+            if not colors and with_colors and part.colors:
+                colors = part.colors
+
+            if colors is None and zero_color is not sb.NotSpecified:
+                colors = [zero_color] * php.Points.count_points(part.bounds)
+
             self._parts[part] = True
             if colors:
                 for point, color in zip(part.points, colors):
                     self[point] = color
 
-        self.parts = list(self._parts)
-        self.update_bounds(self.parts)
+            for point in php.Points.all_points(part.bounds):
+                self.point_to_parts[point].add(part)
+                self.point_to_parts[point].add(part.device)
 
-    def update_bounds(self, parts):
+        self._update_bounds(self.parts)
+
+    def _update_bounds(self, parts):
         if not parts:
             return
 
@@ -139,17 +219,3 @@ class Canvas:
 
         self.width = self.right - self.left
         self.height = self.top - self.bottom
-
-    def parts_for_point(self, point):
-        parts = []
-        for part in self.parts:
-            if point in part.points:
-                parts.append(part)
-        return parts
-
-    def devices_for_point(self, point):
-        devices = set()
-        for part in self.parts:
-            if point in part.points:
-                devices.add(part.device)
-        return list(devices)

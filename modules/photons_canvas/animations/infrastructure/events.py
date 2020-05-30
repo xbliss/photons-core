@@ -16,13 +16,10 @@ class AnimationEvent:
 
         self.typ = typ
         self.value = value
-        self.coords = state.current_coords
         self.canvas = state.canvas
-        self.devices = state.devices
         self.animation = state.animation
         self.prev_state = state.state
         self.background = state.background
-        self.real_coords = state.coords
 
     def __repr__(self):
         return f"<Event {self.typ.name}: {self.value}>"
@@ -30,6 +27,10 @@ class AnimationEvent:
     @property
     def state(self):
         return self.prev_state
+
+    @property
+    def devices(self):
+        return list(self.state.by_device)
 
     @state.setter
     def state(self, new_state):

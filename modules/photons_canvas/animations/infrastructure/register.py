@@ -1,6 +1,8 @@
-from photons_canvas.backgrounds import background_spec
+from photons_canvas.animations.infrastructure.background import Background
 
 from photons_app.errors import PhotonsAppError
+
+from photons_protocol.types import enum_spec
 
 from delfick_project.norms import Meta, sb
 import enum
@@ -53,13 +55,13 @@ class Animator:
         if options is None:
             options = {}
 
-        if background is None:
-            background = sb.NotSpecified
+        if background in (sb.NotSpecified, None):
+            if self.typ is AnimationType.TRANSITION:
+                background = Background.AS_START
+            else:
+                background = Background.NONE
 
-        background = background_spec(for_transition=self.typ is AnimationType.TRANSITION).normalise(
-            Meta.empty(), background
-        )
-
+        background = enum_spec(None, Background, unpacking=True).normalise(Meta.empty(), background)
         return self.Resolver(self, options, background)
 
     class Resolver:

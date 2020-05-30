@@ -1,5 +1,5 @@
 from photons_canvas.animations.infrastructure.events import AnimationEvent
-from photons_canvas.coords import Rearranger
+from photons_canvas.points import rearrange
 
 from photons_app import helpers as hp
 
@@ -19,9 +19,9 @@ class Animation:
     random_orientations = False
     skip_next_transition = False
 
-    coords_separate = False
-    coords_straight = False
-    coords_vertically_aligned = False
+    align_parts_separate = False
+    align_parts_straight = False
+    align_parts_vertically = False
 
     overridable = [
         "every",
@@ -70,13 +70,20 @@ class Animation:
     def setup(self):
         pass
 
-    @property
+    @hp.memoized_property
     def rearranger(self):
-        return Rearranger(
-            coords_separate=self.coords_separate,
-            coords_straight=self.coords_straight,
-            coords_vertically_aligned=self.coords_vertically_aligned,
-        )
+        if self.align_parts_separate:
+            return rearrange.Separate()
+        elif self.align_parts_straight:
+            return rearrange.Straight()
+        elif self.align_parts_vertically:
+            return rearrange.VerticalAlignment()
+
+    def rearrange(self, canvas):
+        arranger = self.rearranger
+        if not arranger:
+            return canvas
+        return rearrange.rearrange(canvas, arranger, keep_colors=True)
 
     async def process_event(self, event):
         raise NotImplementedError()

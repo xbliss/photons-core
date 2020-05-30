@@ -1,73 +1,75 @@
-from photons_canvas.animations import Animation, Finish, an_animation
-from photons_canvas.canvas import CanvasColor
+from photons_canvas.animations import Animation, Finish, an_animation, options
+from photons_canvas import point_helpers as php
 
 from delfick_project.norms import dictobj
 import random
 
 
 class Options(dictobj.Spec):
-    pass
+    color_range = dictobj.Field(options.color_range_spec("rainbow"))
 
 
 class State:
-    def __init__(self, coords):
-        self.color = CanvasColor(random.randrange(0, 360), 1, 1, 3500)
+    def __init__(self, color_range):
+        self.color = color_range.color
 
-        self.wait = 0
-        self.remaining = {}
-        self.all_points = {}
+        self.start = {}
+        self.changed = {}
+        self.remaining = set()
 
-    def add_coords(self, coords):
-        for coord in coords:
-            for point in coord.points:
-                self.remaining[point] = True
-                self.all_points[point] = True
+    def add_points(self, parts, canvas):
+        for part in parts:
+            for point in php.Points.all_points(part.bounds):
+                if point not in self.changed:
+                    self.start[point] = canvas[point]
+                    self.remaining.add(point)
 
     def progress(self):
-        if not self.all_points:
-            return
-
-        amount = len(self.all_points) // 15
+        amount = len(self.start) // 15
         next_selection = random.sample(list(self.remaining), k=min(len(self.remaining), amount))
 
         for point in next_selection:
-            del self.remaining[point]
+            self.changed[point] = self.color
+            self.remaining.remove(point)
+
+    def finished(self, canvas):
+        return not self.remaining and canvas.is_parts(brightness=0)
 
 
 @an_animation("dots", Options, transition=True)
 class Animation(Animation):
-    coords_separate = True
+    align_parts_straight = True
 
     async def process_event(self, event):
         if event.state is None:
-            event.state = State(event.coords)
+            event.state = State(self.options.color_range)
 
         if event.is_new_device:
-            event.state.add_coords(event.value.coords)
+            event.state.add_points(event.value, event.canvas)
             return
 
         if not event.is_tick:
             return
 
+        if event.state.finished(event.canvas):
+            raise Finish("Finished dots")
+
+        if not event.state.remaining:
+            self.duration = 1
+            self.every = 1
+            return lambda point, canvas: None
+
         event.state.progress()
 
         if not event.state.remaining:
             self.acks = True
-            event.state.wait += 1
 
-        if event.state.wait == 2:
-            self.every = 1
-            self.duration = 1
+        state = event.state
 
-        if event.state.wait == 3:
-            raise Finish("Transition complete")
+        def dots(point, canvas):
+            changed = state.changed.get(point)
+            if changed:
+                return changed
+            return state.start.get(point)
 
-        color = event.state.color
-        if event.state.wait > 1:
-            color = CanvasColor(0, 0, 0, 3500)
-
-        for point in event.canvas.points:
-            if point not in event.state.remaining:
-                event.canvas[point] = color
-
-        return event.canvas
+        return dots

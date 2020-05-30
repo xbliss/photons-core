@@ -33,10 +33,10 @@ class colors_spec(sb.Spec):
 
 
 class Overrides(dictobj.Spec):
-    hue = dictobj.Field(sb.float_spec, wrapper=sb.optional_spec)
-    saturation = dictobj.Field(sb.float_spec, wrapper=sb.optional_spec)
-    brightness = dictobj.Field(sb.float_spec, wrapper=sb.optional_spec)
-    kelvin = dictobj.Field(sb.integer_spec, wrapper=sb.optional_spec)
+    hue = dictobj.NullableField(sb.float_spec)
+    saturation = dictobj.NullableField(sb.float_spec)
+    brightness = dictobj.NullableField(sb.float_spec)
+    kelvin = dictobj.NullableField(sb.integer_spec)
 
 
 class Options(dictobj.Spec):
@@ -47,9 +47,9 @@ class Options(dictobj.Spec):
 
     @hp.memoized_property
     def override_layer(self):
-        def layer(point, canvas, parts):
+        def layer(point, canvas):
             if canvas.points.get(point) is not None:
-                return canvas[point].clone(**self.overrides)
+                return canvas.override(point, **self.overrides)
 
         return layer
 
@@ -57,7 +57,7 @@ class Options(dictobj.Spec):
 class Applier:
     def __init__(self, canvas, colors):
         self.canvas = canvas
-        self.colors = [php.hsbk(color) for color in colors]
+        self.colors = colors
 
     def apply(self):
         if len(self.canvas.points) == 1:

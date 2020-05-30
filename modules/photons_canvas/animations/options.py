@@ -1,113 +1,211 @@
-from photons_canvas.canvas import CanvasColor
+from photons_canvas import point_helpers as php
 
-from delfick_project.norms import dictobj, sb, BadSpecValue
+from photons_control.colour import make_hsbk
+
+from delfick_project.norms import sb, BadSpecValue
 import random
 
 
-def ColorOption(h, s, b, k):
-    class C(dictobj.Spec):
-        hue = dictobj.Field(sb.float_spec, default=h)
-        saturation = dictobj.Field(sb.float_spec, default=s)
-        brightness = dictobj.Field(sb.float_spec, default=b)
-        kelvin = dictobj.Field(sb.integer_spec, default=k)
-
-        @property
-        def color(self):
-            return CanvasColor(self.hue, self.saturation, self.brightness, self.kelvin)
-
-    return C.FieldSpec()
+class ZeroColor:
+    def __init__(self):
+        self.color = None
 
 
-class HueRange:
-    def __init__(self, minimum, maximum):
-        self.minimum = minimum
-        self.maximum = maximum
-
-    def make_hue(self):
-        if self.minimum == self.maximum:
-            return self.minimum
-
-        if self.maximum < self.minimum:
-            hue = random.randrange(self.minimum, self.maximum + 360)
-            if hue > 360:
-                hue -= 360
-            return hue
-
-        return random.randrange(self.minimum, self.maximum)
+class OneColor:
+    def __init__(self, hue, saturation, brightness, kelvin):
+        self.color = (hue, saturation, brightness, kelvin)
 
 
-class split_by_comma(sb.Spec):
-    def setup(self, spec):
-        self.spec = spec
+class OneColorRange:
+    def __init__(self, hs, ss, bb, kk):
+        self.hs = hs
+        self.ss = ss
+        self.bb = bb
+        self.kk = kk
+
+    @property
+    def color(self):
+        return (self.hue, self.saturation, self.brightness, self.kelvin)
+
+    @property
+    def hue(self):
+        h = self.hs
+        if h[0] != h[1]:
+            h = random.randrange(h[0], h[1])
+        else:
+            h = h[0]
+        return h % 360
+
+    @property
+    def saturation(self):
+        s = self.ss
+        if s[0] != s[1]:
+            s = random.randrange(s[0], s[1]) / 1000
+        else:
+            s = s[0]
+
+        if s < 0:
+            s = 0
+        elif s > 1:
+            s = 1
+        return s
+
+    @property
+    def brightness(self):
+        b = self.bb
+        if b[0] != b[1]:
+            b = random.randrange(b[0], b[1]) / 1000
+        else:
+            b = b[0]
+
+        if b < 0:
+            b = 0
+        elif b > 1:
+            b = 1
+        return b
+
+    @property
+    def kelvin(self):
+        k = self.kk
+        if k[0] != k[1]:
+            k = random.randrange(k[0], k[1])
+        else:
+            k = k[0]
+
+        if k < 0:
+            k = 0
+        elif k > 0xFFFF:
+            k = 0xFFFF
+        return k
+
+
+class ManyColor:
+    def __init__(self, colors):
+        if len(colors) == 0:
+            colors = [ZeroColor()]
+        self.colors = colors
+
+    @property
+    def color(self):
+        return random.choice(self.colors).color
+
+
+class color_option_spec(sb.Spec):
+    def setup(self, h, s, b, k):
+        self.default = (h, s, b, k)
 
     def normalise_empty(self, meta):
-        return []
+        return self.normalise_filled(meta, self.default)
 
     def normalise_filled(self, meta, val):
-        final = []
-        if type(val) is list:
-            for i, v in enumerate(val):
-                final.extend(self.normalise_filled(meta.indexed_at(i), v))
-        elif type(val) is str:
-            for i, v in enumerate(val.split(",")):
-                if v:
-                    final.append(self.spec.normalise(meta.indexed_at(i), v))
-        else:
-            final.append(self.spec.normalise(meta, val))
-
-        return final
+        h, s, b, k = make_hsbk(val)
+        return OneColor(*make_hsbk(val))
 
 
-class hue_range_spec(sb.Spec):
+class color_range_spec(sb.Spec):
+    def setup(self, default):
+        self.default = default
+
+    def normalise_empty(self, meta):
+        return self.normalise(meta, self.default)
+
     def normalise_filled(self, meta, val):
-        if val == "rainbow":
-            return HueRange(0, 360)
+        if isinstance(val, str):
+            val = val.split(":")
 
-        was_list = False
-        if type(val) is list:
-            was_list = True
-            if len(val) not in (1, 2):
-                raise BadSpecValue("A hue range must be 2 or 1 items", got=val, meta=meta)
-            if len(val) == 1:
-                val = [val[0], val[0]]
+        colors = []
+        for i, r in enumerate(val):
+            colors.append(self.interpret(meta.indexed_at(i), r))
 
-        try:
-            val = int(val)
-            if val < 0 or val > 360:
-                raise BadSpecValue("A hue number must be between 0 and 360", got=val, meta=meta)
-            val = [val, val]
-        except (ValueError, TypeError):
-            pass
+        return ManyColor([c for c in colors if c is not None])
 
-        if type(val) is str:
-            val = val.split("-", 1)
+    def interpret(self, meta, val):
+        if not isinstance(val, (tuple, list, str)):
+            raise BadSpecValue("Each color specifier must be a list or string", got=val, meta=meta)
 
-        for part in val:
-            if type(part) is str and (not part or not part.isdigit()):
-                msg = "Hue range must be the string 'rainbow' or a string of '<min>-<max>'"
-                if was_list:
-                    msg = f"{msg} or a list of [<min>, <max>]"
-                raise BadSpecValue(msg, got=val, meta=meta)
+        if isinstance(val, str):
+            val = val.split(",")
 
-        rnge = [int(p) for p in val]
-        for i, number in enumerate(rnge):
-            if number < 0 or number > 360:
-                raise BadSpecValue(
-                    "A hue number must be between 0 and 360", got=number, meta=meta.indexed_at(i)
-                )
+        if len(val) == 0:
+            return
+        elif len(val) == 1:
+            val = (*val, (1, 1), (1, 1), (3500, 3500))
+        elif len(val) == 2:
+            val = (*val, (1, 1), (3500, 3500))
+            if val[0] == "rainbow":
+                val[2] = (1, 1)
+        elif len(val) == 3:
+            val = (*val, (3500, 3500))
+        elif len(val) > 4:
+            raise BadSpecValue("Each color must be 4 or less specifiers", got=val, meta=meta)
 
-        return HueRange(*rnge)
+        result = []
+        for i, v in enumerate(val):
+            m = meta.indexed_at(i)
+
+            if not isinstance(v, (tuple, list, str)):
+                raise BadSpecValue("Each color specifier must be a list or string", got=val, meta=m)
+
+            if i != 0 and v == "rainbow":
+                raise BadSpecValue("Only hue may be given as 'rainbow'", meta=m)
+
+            if v == "rainbow":
+                result.append((0, 360))
+                continue
+
+            if isinstance(v, str):
+                v = v.split("-")
+
+            if len(v) > 2:
+                raise BadSpecValue("A specifier must be two values", got=v, meta=m)
+
+            if len(v) == 0:
+                continue
+
+            if len(v) == 1:
+                v = v * 2
+
+            if i in (1, 2):
+                v = (v[0] * 1000, v[1] * 1000)
+
+            result.append((int(v[0]), int(v[1])))
+
+        return OneColorRange(*result)
 
 
-def normalise_speed_options(options):
-    if options.min_speed < 0:
-        options.min_speed = 0
+class Rate:
+    def __init__(self, mn, mx):
+        self.mn = round(mn, 3)
+        self.mx = round(mx, 3)
 
-    if options.max_speed < 0:
-        options.max_speed = 0
+        self.constant = None
+        if self.mn == self.mx:
+            self.constant = self.mn
 
-    if options.min_speed > options.max_speed:
-        options.min_speed, options.max_speed = options.max_speed, options.min_speed
+    @property
+    def rate(self):
+        if self.constant is not None:
+            return self.connstant
+        return random.randrange(self.mn * 1000, self.mx * 1000) / 1000
 
-    if options.min_speed == 0 and options.max_speed == 0:
-        options.max_speed = 0.1
+    def __call__(self):
+        return self.rate
+
+
+class rate_spec(sb.Spec):
+    def setup(self, default):
+        self.default = default
+
+    def normalise_empty(self, meta):
+        return self.normalise_filled(meta, self.default)
+
+    def normalise_filled(self, meta, value):
+        if isinstance(value, str):
+            value = value.split("-")
+        elif isinstance(value, (int, float)):
+            value = (value, value)
+
+        if not isinstance(value, (list, tuple)):
+            raise BadSpecValue("Speed option must be 'min-max' or [min, max]", got=value, meta=meta)
+
+        return Rate(value[0], value[1])

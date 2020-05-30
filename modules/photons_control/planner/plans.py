@@ -9,7 +9,9 @@ from photons_products import Products, Zones
 from delfick_project.norms import sb, dictobj
 from collections import defaultdict
 from functools import partial
+from lru import LRU
 import random
+import struct
 
 plan_by_key = {}
 
@@ -438,6 +440,9 @@ class ColorsPlan(Plan):
     Where ``<hsbk>`` is a :ref:`photons_messages.fields.color` object.
     """
 
+    HSBKCache = LRU(3000)
+    colors_struct = struct.Struct("<" + "H" * 64 * 4)
+
     default_refresh = 1
 
     @property
@@ -476,11 +481,33 @@ class ColorsPlan(Plan):
                 return True
 
             if pkt | TileMessages.State64:
-                colors = self.deps["chain"]["reverse_orient"](pkt.tile_index, pkt.colors)
+                colors = self.normalize_set64(pkt.actual("colors"))
+                colors = self.deps["chain"]["reverse_orient"](pkt.tile_index, colors)
                 self.result.append((pkt.tile_index, colors))
 
                 if len(self.result) == len(self.deps["chain"]["chain"]):
                     return True
+
+        def normalize_set64(self, bts):
+            colors = []
+            nums = self.parent.colors_struct.unpack(bts.tobytes())
+
+            for i in range(64):
+                start = i * 4
+                nxt = nums[start : start + 4]
+
+                h, s, b, k = nxt
+                c = self.parent.HSBKCache.get(nxt)
+
+                if c is None:
+                    h = round(360 * h / 0xFFFF)
+                    s = round(s / 0xFFFF, 3)
+                    b = round(b / 0xFFFF, 3)
+                    c = self.parent.HSBKCache[nxt] = (h, s, b, k)
+
+                colors.append(c)
+
+            return colors
 
         async def info(self):
             return [colors for _, colors in sorted(self.result)]
@@ -593,7 +620,7 @@ class PartsAndColorsPlan(Plan):
         async def info(self):
             for i, p in enumerate(self.deps["parts"]):
                 p.original_colors = self.deps["colors"][i]
-                p.real_part.original_colors = [c.clone() for c in self.deps["colors"][i]]
+                p.real_part.original_colors = self.deps["colors"][i]
 
             return self.deps["parts"]
 
