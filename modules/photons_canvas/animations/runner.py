@@ -16,13 +16,14 @@ import asyncio
 
 log = logging.getLogger("photons_canvas.animations.runner")
 
-from profiling.tracing import TracingProfiler
+
 from contextlib import contextmanager
 
 
 @contextmanager
 def profile(ignore=True):
-    profiler = None if ignore else TracingProfiler()
+    # from profiling.tracing import TracingProfiler
+    profiler = None  # if ignore else TracingProfiler()
     if profiler:
         try:
             with profiler:
@@ -94,7 +95,7 @@ class AnimationRunner:
 
     def transfer_error(self, ts, t):
         def process(res, fut):
-            if ts.pending == 0 or len(self.combined_state.parts) == 0:
+            if ts.pending == 0 or len(self.combined_state.canvas.parts) == 0:
                 fut.cancel()
 
         try:
@@ -118,9 +119,10 @@ class AnimationRunner:
                 break
 
             animation = make_animation()
-            await state.set_animation(animation, background)
 
             try:
+                await state.set_animation(animation, background)
+
                 with profile():
                     async for messages in state.messages():
                         by_serial = defaultdict(list)

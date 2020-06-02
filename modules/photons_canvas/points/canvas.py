@@ -42,7 +42,7 @@ class Canvas:
     def __bool__(self):
         return bool(self._parts) or bool(self.points)
 
-    def __call__(self, point, canvas, parts):
+    def __call__(self, point, canvas):
         return self.points.get(point)
 
     @property
@@ -183,7 +183,7 @@ class Canvas:
 
             for point in php.Points.all_points(part.bounds):
                 self.point_to_parts[point].add(part)
-                self.point_to_parts[point].add(part.device)
+                self.point_to_devices[point].add(part.device)
 
         self._update_bounds(self.parts)
 

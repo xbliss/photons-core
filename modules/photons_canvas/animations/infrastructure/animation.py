@@ -44,6 +44,7 @@ class Animation:
 
     async def stream(self, final_future, animation_state):
         stop_fut = hp.ChildOfFuture(final_future)
+        del self.ticker
 
         async def tick():
             async for result in self.ticker:
