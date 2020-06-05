@@ -6,6 +6,7 @@ from photons_app import helpers as hp
 
 from photons_messages import LightMessages
 
+import itertools
 import random
 
 NO_MESSAGES = ()
@@ -26,7 +27,6 @@ class Part:
         original_colors=None,
     ):
         self.device = device
-        self.real_part = self if real_part is None else real_part
         self.orientation = orientation
         self.part_number = part_number
         self.update(user_x, user_y, width, height)
@@ -37,6 +37,9 @@ class Part:
 
         self._key = (self.device, self.part_number)
         self._hash = hash(self._key)
+
+        self.sent = []
+        self.last_msgs = []
 
         self._set_64 = Set64(
             x=0,
@@ -50,6 +53,9 @@ class Part:
             res_required=False,
             target=self.device.serial,
         )
+
+        real_part = self.clone() if real_part is None else real_part
+        self.real_part = real_part
 
     def __hash__(self):
         return self._hash
@@ -82,11 +88,21 @@ class Part:
         if value is not None and self.colors is None:
             self.colors = list(value)
 
-    def clone(self, *, user_x=None, user_y=None, width=None, height=None):
+    def clone_real_part(self):
+        return self.real_part.clone(real_part=self.real_part, frm=self)
+
+    def clone(
+        self, *, user_x=None, user_y=None, width=None, height=None, real_part=False, frm=None
+    ):
+        if frm is None:
+            frm = self
+
         ux = self.user_x if user_x is None else user_x
         uy = self.user_y if user_y is None else user_y
         w = self.width if width is None else width
         h = self.height if height is None else height
+
+        l = lambda ss: ss if ss is None else list(ss)
 
         return Part(
             ux,
@@ -96,9 +112,9 @@ class Part:
             self.part_number,
             self.orientation,
             self.device,
-            colors=self.colors,
-            real_part=self.real_part,
-            original_colors=self.original_colors,
+            colors=l(getattr(frm, "colors")),
+            real_part=real_part if not getattr(self, "real_part", False) else self.real_part,
+            original_colors=l(getattr(frm, "original_colors")),
         )
 
     def update(self, user_x, user_y, width, height):
@@ -140,12 +156,45 @@ class Part:
 
         return reorient(colors, o)
 
-    def msgs(self, colors, *, acks=False, duration=1, randomize=False):
-        if colors == self.colors:
-            return NO_MESSAGES
+    def msgs(self, colors, *, acks=False, duration=1, randomize=False, force=False):
+        diff = False
+        if self.colors is None or force:
+            diff = True
+        else:
+            for c1, c2 in itertools.zip_longest(colors, self.colors):
+                if c1 is None and c2 is not None:
+                    diff = True
+                    break
+
+                if c2 is None and c1 is not None:
+                    diff = True
+                    break
+
+                if c1 is None and c2 is None:
+                    continue
+
+                for i in (0, 1, 2, 3):
+                    if abs(c1[i] - c2[i]) > 0.00009:
+                        diff = True
+                        break
+
+        if diff:
+            self.sent = []
+
+        if len(self.sent) < 3:
+            self.sent.append(1)
 
         self.colors = colors
 
+        if not diff and self.last_msgs and len(self.sent) >= 3:
+            return NO_MESSAGES
+
+        if diff:
+            self.last_msgs = self._msgs(colors, acks=acks, duration=duration, randomize=randomize)
+
+        return self.last_msgs
+
+    def _msgs(self, colors, acks=False, duration=1, randomize=False):
         if self.device.cap.has_matrix:
             colors = [
                 c if c is not None else None for c in self.reorient(colors, randomize=randomize)

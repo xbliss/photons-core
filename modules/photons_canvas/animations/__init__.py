@@ -17,7 +17,14 @@ for d in ("features", "transitions"):
             if os.path.isfile(location):
                 filename = filename[:-3]
 
-            if d != "features" or filename in ("balls", "dice", "color_cycle"):
+            if d != "features" or filename in (
+                "balls",
+                "dice",
+                "color_cycle",
+                "falling",
+                "time",
+                "twinkles",
+            ):
                 __import__(f"photons_canvas.animations.{d}.{filename}")
 
 __all__ = [

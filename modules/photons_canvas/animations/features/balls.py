@@ -26,7 +26,7 @@ class Direction(enum.Enum):
 
 
 class Options(dictobj.Spec):
-    rate = dictobj.Field(options.rate_spec((0.9, 1.3)))
+    rate = dictobj.Field(options.range_spec((0.9, 1.3), rate=True))
     ball_colors = dictobj.Field(options.color_range_spec("rainbow"))
 
     num_balls = dictobj.Field(sb.integer_spec, default=5)

@@ -56,6 +56,7 @@ class Character:
 class Characters:
     def __init__(self, *characters):
         self.characters = characters
+        self.width = sum(ch.width for ch in self.characters)
 
     def pairs(self, left_x, top_y, fill_color):
         for character in self.characters:

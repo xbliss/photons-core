@@ -13,6 +13,10 @@ class Color:
     EMPTIES = (ZERO, None)
 
     @classmethod
+    def dead(kls, color):
+        return color in kls.EMPTIES or color[2] == 0
+
+    @classmethod
     def override(
         kls, color, hue=None, saturation=None, brightness=None, kelvin=None,
     ):
@@ -97,6 +101,9 @@ def average_color(colors):
 
     if not colors:
         return None
+
+    if len(set(colors)) == 1:
+        return colors[0]
 
     hue_x_total = 0
     hue_y_total = 0

@@ -1,5 +1,6 @@
 from photons_canvas.animations.infrastructure.events import AnimationEvent
 from photons_canvas.points import rearrange
+from photons_canvas import Canvas
 
 from photons_app import helpers as hp
 

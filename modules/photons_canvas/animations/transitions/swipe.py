@@ -7,7 +7,7 @@ import random
 
 
 class Options(LineOptions):
-    rate = dictobj.Field(options.rate_spec((1.5, 2)))
+    rate = dictobj.Field(options.range_spec((1.5, 2), minimum_mn=0.01, maximum_mx=False, rate=True))
 
 
 class State:

@@ -589,11 +589,11 @@ class PartsPlan(Plan):
             parts = []
 
             for i, t in enumerate(self.chain):
-                part = cont.Part(
-                    t.user_x, t.user_y, t.width, t.height, i, self.orientations[i], device,
+                parts.append(
+                    cont.Part(
+                        t.user_x, t.user_y, t.width, t.height, i, self.orientations[i], device,
+                    )
                 )
-                part.real_part = part.clone()
-                parts.append(part)
 
             return parts
 

@@ -7,9 +7,9 @@ from collections import defaultdict
 class Canvas:
     def __init__(self):
         self._parts = {}
+        self._devices = {}
 
         self.points = {}
-        self.devices = []
 
         self.top = None
         self.left = None
@@ -50,12 +50,17 @@ class Canvas:
         return list(self._parts)
 
     @property
+    def devices(self):
+        return list(self._devices)
+
+    @property
     def bounds(self):
         return (self.left, self.right), (self.top, self.bottom), (self.width, self.height)
 
     def clone(self):
         new = self.__class__()
         new._parts.update(self._parts)
+        new._devices.update(self._devices)
         new.points.update(self.points)
         new.point_to_parts.update(self.point_to_parts)
         new.point_to_devices.update(self.point_to_devices)
@@ -131,13 +136,8 @@ class Canvas:
     def restore_msgs(self, *, duration=1):
         for part in self.parts:
             if part.real_part and part.real_part.original_colors:
-                yield from part.real_part.msgs(
-                    part.real_part.original_colors,
-                    power_on=False,
-                    duration=duration,
-                    acks=True,
-                    randomize=False,
-                )
+                cs = part.real_part.original_colors
+                yield from part.real_part.msgs(cs, duration=duration, force=True)
 
     def msgs(self, layer, acks=False, duration=1, randomize=False, onto=None):
         msgs = []
@@ -177,6 +177,7 @@ class Canvas:
                 colors = [zero_color] * php.Points.count_points(part.bounds)
 
             self._parts[part] = True
+            self._devices[part.device] = True
             if colors:
                 for point, color in zip(part.points, colors):
                     self[point] = color

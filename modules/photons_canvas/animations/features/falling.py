@@ -1,124 +1,119 @@
 from photons_canvas.animations import Animation, an_animation
 from photons_canvas.animations.lines import LineOptions
-from photons_canvas.canvas import Canvas, CanvasColor
+from photons_canvas import point_helpers as php
 
 from delfick_project.norms import dictobj, sb
 import random
 
 
 class Options(LineOptions):
-    min_speed = dictobj.Field(sb.float_spec, default=0.6)
-    max_speed = dictobj.Field(sb.float_spec, default=0.8)
+    min_speed = dictobj.Field(sb.float_spec, default=1)
+    max_speed = dictobj.Field(sb.float_spec, default=2)
+
+
+class Line:
+    def __init__(self, line, rate, start, blank, tail):
+        self.line = line
+        self.tail = tail
+        self.rate = rate
+        self.start = start
+        self.blank = blank
+
+    @classmethod
+    def make(kls, options, top_y):
+        rate = -options.rate()
+        blank = random.randrange(0, 100) < 50
+        tail = random.randrange(10, 15)
+        line = options.make_line(random.randrange(3, 6))
+        start = top_y + random.randrange(6, 10)
+        return Line(line, rate, start, blank, tail)
+
+    def pixels(self, col, onto):
+        self.line.progress(self.rate)
+        pixels = list(self.line.pixels(self.start, reverse=True))
+
+        top = None
+        for row, color in pixels:
+            top = row
+            if self.blank:
+                color = None
+            onto[(col, row)] = color
+
+        return top
 
 
 class State:
     def __init__(self, options):
+        self.done = {}
         self.lines = {}
         self.rates = {}
         self.start = {}
-        self.canvas = Canvas()
         self.options = options
-        self.finished = False
 
-    def add_coords(self, event, coords, bottom_y):
-        for coord in coords:
-            for point in coord.points:
-                if point not in event.canvas:
-                    event.canvas[point] = None
-                col, _ = point
-                if col not in self.lines:
-                    self.lines[col] = []
+    def add_cols(self, canvas):
+        for point in php.Points.row(0, canvas.bounds):
+            col = point[0]
+            if col not in self.lines:
+                self.lines[col] = []
 
-    def progress(self, full_canvas, bottom_y, top_y):
-        if self.finished:
-            return None, True
+    def next_layer(self, bounds):
+        _, (top_y, bottom_y), _ = bounds
 
-        for point, color in list(self.canvas):
-            if color is None:
-                continue
+        pixels = {}
 
-            fade_amount = self.options.fade_amount
-            if fade_amount == 0:
-                self.canvas[point] = None
+        for col, lines in list(self.lines.items()):
+            remove = []
+
+            most_top = None
+            for line in lines:
+                top = line.pixels(col, pixels)
+                if most_top is None or top > most_top:
+                    most_top = top
+
+                if top < bottom_y:
+                    remove.append(line)
+
+            self.lines[col] = [l for l in self.lines[col] if l not in remove]
+
+            if most_top is None or top_y - most_top > random.randrange(3, 7):
+                self.lines[col].append(Line.make(self.options, top_y))
+
+        self.done.update(pixels)
+
+        def layer(point, canvas):
+            p1 = pixels.get(point)
+            p2 = canvas.points.get(point)
+            if not p1 and not p2:
+                return
+            elif p1 and not p2:
+                return p1
+            elif p2 and not p1:
+                if point not in self.done:
+                    return p2
+                else:
+                    return canvas.dim(point, self.options.fade_amount)
             else:
-                self.canvas[point].brightness -= fade_amount
+                c = canvas.dim(point, self.options.fade_amount)
+                if not c:
+                    return p1
 
-        for col, lines in self.lines.items():
-            self.apply_lines(col, lines, full_canvas, bottom_y, top_y)
+                return php.average_color([p1, c])
 
-        for point in list(self.canvas.points):
-            if point not in full_canvas:
-                del self.canvas[point]
-
-        return self.canvas
-
-    def apply_lines(self, col, lines, full_canvas, bottom_y, top_y):
-        def paint_line(line):
-            pixels = list(line.pixels(line.start_y))
-            start_pos = pixels[0][0]
-
-            relevant = False
-            for pos, color in pixels:
-                if not color:
-                    continue
-
-                if pos > top_y:
-                    relevant = True
-
-                point = (col, pos)
-                if not line.blank:
-                    if full_canvas.get(point, None) is not None:
-                        color = CanvasColor.average([color, full_canvas[point]])
-                    self.canvas[point] = color
-
-            return start_pos, relevant
-
-        start_pos = None
-        for i, line in enumerate(lines):
-            line.progress(line.rate)
-            s, relevant = paint_line(line)
-            if not relevant:
-                lines.pop(i)
-
-            if start_pos is None or s > start_pos:
-                start_pos = s
-
-        if start_pos is None or bottom_y - start_pos > random.randrange(7, 15):
-            line = self.options.make_line(random.randrange(3, 6))
-            if start_pos is None:
-                line.start_y = bottom_y
-            else:
-                line.start_y = bottom_y + random.randrange(3, 6)
-            line.rate = -self.options.make_rate()
-            line.blank = random.randrange(0, 100) < 50
-            line.tail = random.randrange(10, 15)
-            lines.append(line)
-
-            paint_line(line)
+        return layer
 
 
 @an_animation("falling", Options)
 class FallingAnimation(Animation):
     def setup(self):
-        self.swip_canvas = Canvas()
+        self.duration = self.every
 
     async def process_event(self, event):
-        _, (top_y, bottom_y), _ = event.coords.bounds
-
         if not event.state:
             event.state = State(self.options)
 
         if event.is_new_device:
-            event.state.add_coords(event, event.value.coords, bottom_y)
+            event.state.add_cols(event.canvas)
             return
 
-        if not event.is_tick:
-            return
-
-        canvas = event.state.progress(event.canvas, bottom_y, top_y)
-
-        for point, color in canvas:
-            if point in event.canvas:
-                event.canvas[point] = color
-
-        return event.canvas
+        elif event.is_tick:
+            return event.state.next_layer(event.canvas.bounds)

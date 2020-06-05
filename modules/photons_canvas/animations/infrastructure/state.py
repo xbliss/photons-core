@@ -1,5 +1,4 @@
 from photons_canvas.animations.infrastructure.events import AnimationEvent
-from photons_canvas.animations.infrastructure.background import Background
 from photons_canvas.animations.infrastructure.finish import Finish
 from photons_canvas import Canvas
 
@@ -43,7 +42,6 @@ class State:
         self.background = None
 
         self.canvas = None
-        self.maintained_canvas = None
 
     def __bool__(self):
         return self.canvas is not None and bool(self.canvas.parts)
@@ -94,8 +92,9 @@ class State:
             self.background = background
 
             self.canvas = Canvas()
-            self.maintained_canvas = Canvas()
-            await self.add_collected([[p.clone() for p in ps] for ps in self.by_device.values()])
+            await self.add_collected(
+                [[p.clone_real_part() for p in ps] for ps in self.by_device.values()]
+            )
 
     def add_parts(self, parts):
         for part in parts:
@@ -104,15 +103,8 @@ class State:
         if not self.animation:
             return
 
-        if self.background is Background.AS_START:
-            self.canvas.add_parts(*parts, with_colors=True)
-        else:
-            self.canvas.add_parts(*parts, zero_color=None)
-            if self.background is Background.MAINTAIN:
-                self.maintained_canvas.add_parts(*parts, with_colors=True)
-
+        self.canvas.add_parts(*parts, with_colors=self.background)
         self.canvas = self.animation.rearrange(self.canvas)
-        self.maintained_canvas = self.animation.rearrange(self.maintained_canvas)
 
         self.by_device.clear()
         for part in self.canvas.parts:
@@ -155,11 +147,6 @@ class State:
             return
 
         self.canvas = self.canvas.clone()
-
-        if self.maintained_canvas:
-            layer = lambda point, canvas, parts: layer(
-                point, canvas, parts
-            ) or self.maintained_canvas.get(point)
 
         msgs = list(
             self.canvas.msgs(

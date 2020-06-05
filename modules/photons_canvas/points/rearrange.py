@@ -5,7 +5,7 @@ class Separate:
     def rearrange(self, canvas):
         user_x = 0
         for part in canvas.parts:
-            yield part, part.real_part.clone(user_x=user_x)
+            yield part.clone(user_x=user_x)
             user_x += part.width / 8
 
 
@@ -15,14 +15,14 @@ class Straight:
         for part in sorted(
             canvas.parts, key=lambda p: (p.real_part.user_x, p.device, p.part_number)
         ):
-            yield part, part.real_part.clone(user_x=user_x, user_y=0)
+            yield part.clone(user_x=user_x, user_y=0)
             user_x += part.width / 8
 
 
 class VerticalAlignment:
     def rearrange(self, canvas):
         for part in canvas.parts:
-            yield part, part.real_part.clone(user_y=0)
+            yield part.clone(user_y=0)
 
 
 def rearrange(canvas, rearranger, keep_colors=False):
@@ -30,11 +30,11 @@ def rearrange(canvas, rearranger, keep_colors=False):
 
     parts = []
 
-    for old_part, new_part in rearranger.rearrange(canvas):
+    for part in rearranger.rearrange(canvas):
         if keep_colors:
-            parts.append((new_part, old_part.colors))
+            parts.append((part, part.colors))
         else:
-            parts.append(new_part)
+            parts.append(part)
 
     new.add_parts(*parts)
     return new

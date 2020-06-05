@@ -1,6 +1,7 @@
 from photons_canvas.animations import register, AnimationRunner
 from photons_canvas.theme import ApplyTheme
 
+from photons_app.errors import PhotonsAppError
 from photons_app.actions import an_action
 
 from delfick_project.option_merge import MergedOptions
@@ -66,28 +67,30 @@ async def animate(collector, target, reference, artifact, **kwargs):
         artifact = reference
         reference = ref
 
-    run_options = collector.photons_app.extra_as_json
+    extra = collector.photons_app.extra_as_json
     reference = collector.reference_object(reference)
 
-    options = run_options
-    if isinstance(run_options, list):
-        run_options = {"animations": run_options}
+    options = {}
+    specific_animation = artifact not in (None, "", sb.NotSpecified)
 
-    if artifact not in (None, "", sb.NotSpecified):
-        options = sb.NotSpecified
+    if specific_animation:
+        options = extra
+        run_options = extra.pop("run_options", {})
+    else:
+        run_options = extra
+        if isinstance(run_options, list):
+            run_options = {"animations": run_options}
+
+    if specific_animation:
         background = sb.NotSpecified
-
-        if "options" in run_options:
-            options = run_options.pop("options")
-
-        if "background" in run_options:
-            background = run_options.pop("background")
-
         layered = {"animations": [[artifact, background, options]], "animation_limit": 1}
         run_options = MergedOptions.using(run_options, layered).as_dict()
 
     def errors(e):
-        log.error(e)
+        if not isinstance(e, PhotonsAppError):
+            log.exception(e)
+        else:
+            log.error(e)
 
     conf = collector.configuration
     photons_app = conf["photons_app"]

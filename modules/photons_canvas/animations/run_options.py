@@ -275,17 +275,13 @@ def make_run_options(val, animation_options):
             "animations": [
                 ["swipe", {"line_hues": ["0-10", "100-150"], "fade_amount": 0.2}],
                 #
-                ["falling", "as_start", {"num_seconds": 5}],
+                ["falling", "as_start", {"num_seconds": 15}],
                 #
                 ["transition:balls", {"num_seconds": 5}],
                 ["feature:dots", "as_start", {"skip_next_transition": True}],
                 #
-                ["marquee", {"text": "Photons ftw!", "num_iterations": 1}],
-                ["dots"],
-                #
                 ["twinkles", {"num_seconds": 5, "skip_next_transition": True}],
                 #
-                ["nyan", "maintain", {"num_iterations": 1, "random_orientations": True}],
                 ["swipe", {"line_hues": ["200-300"], "fade_amount": 0.05}],
                 #
                 ["dice", {"num_iterations": 1}],
