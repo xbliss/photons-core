@@ -30,6 +30,7 @@ from photons_app.errors import ProgrammerError
 from delfick_project.norms import dictobj, sb, Meta
 from bitarray import bitarray
 from functools import partial
+import itertools
 import binascii
 import logging
 import json
@@ -259,7 +260,7 @@ class PacketSpecMixin:
         Used by __getitem__ to use the spec on the type to transform the ``actual`` value
         """
         if typ._allow_callable:
-            if callable(actual):
+            if callable(actual) and actual is not sb.NotSpecified:
                 actual = actual(parent or self, serial)
 
         spec = typ.spec(self, unpacking, transform=False)
@@ -321,6 +322,45 @@ class PacketSpecMixin:
 
         # Otherwise we set directly on the packet
         dictobj.__setitem__(self, key, val)
+
+    def __eq__(self, other):
+        if not isinstance(other, dict):
+            return other == self
+
+        has_parent = hasattr(self.Meta, "parent")
+
+        for key, typ in self.Meta.all_field_types:
+            group = self.Meta.name_to_group.get(key)
+            if group == "payload" and has_parent and type(other) is self.Meta.parent:
+                continue
+
+            if group is None:
+                if self[key] != other[key]:
+                    return False
+                continue
+
+            if key not in other and not isinstance(other.get(group), dict):
+                return False
+
+            if key not in other:
+                if key not in other[group]:
+                    return False
+
+                if self[key] != other[group][key]:
+                    return False
+
+            elif self[key] != other[key]:
+                return False
+
+        if has_parent and type(other) is self.Meta.parent:
+            if "payload" not in other:
+                return False
+
+            want = self.payload.pack(parent=self, serial=getattr(self, "serial", None))
+            if other["payload"] != want and other["payload"] != want.tobytes():
+                return False
+
+        return True
 
     def _set_group_item(self, key, val):
         """
@@ -403,8 +443,11 @@ class PacketSpecMixin:
 
         # Set all the keys but those found in the payload
         # Because we get all_names from the payload, we are ignoring those in the actual payload
-        for key in parent.Meta.all_names:
-            final[key] = self.__getitem__(key, serial=serial, parent=self)
+        for key, typ in parent.Meta.all_field_types:
+            value = self.actual(key)
+            if typ._allow_callable or typ._transform and value is sb.NotSpecified:
+                value = self.__getitem__(key, serial=serial, parent=self)
+            dictobj.__setitem__(final, key, value)
 
         # And set our packed payload
         final[last_group_name] = self[last_group_name].pack(parent=self, serial=serial)
@@ -614,4 +657,22 @@ class PacketSpecMetaKls(dictobj.Field.metaclass):
         return kls
 
 
-dictobj.PacketSpec = type.__new__(PacketSpecMetaKls, "PacketSpec", (PacketSpecMixin, dictobj), {})
+class NaiveDictobj(dictobj):
+    def setup(self, *args, **kwargs):
+        if not kwargs:
+            for (key, dflt), val in itertools.zip_longest(
+                self.fields, args, fillvalue=sb.NotSpecified
+            ):
+                if val is sb.NotSpecified:
+                    val = dflt()
+                setattr(self, key, val)
+            return
+
+        for key, dflt in self.fields:
+            val = kwargs.get(key, dflt())
+            setattr(self, key, val)
+
+
+dictobj.PacketSpec = type.__new__(
+    PacketSpecMetaKls, "PacketSpec", (PacketSpecMixin, NaiveDictobj), {}
+)
