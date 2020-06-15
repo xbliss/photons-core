@@ -2,14 +2,14 @@ from photons_messages import enums, fields
 from photons_messages.frame import msg
 
 from photons_protocol.messages import T, Messages, MultiOptions
-from photons_protocol.types import Optional
+from photons_protocol import Optional, Unset
 
 from delfick_project.norms import sb
 import math
 
 
 def empty(pkt, attr):
-    return pkt.actual(attr) in (Optional, sb.NotSpecified)
+    return pkt.actual(attr) in (Optional, Unset)
 
 
 def color_zones_response_count(req, res):

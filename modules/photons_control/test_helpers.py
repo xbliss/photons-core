@@ -447,9 +447,7 @@ def default_responders(
     if cap.has_multizone:
         if zones is None:
             assert False, "Product has multizone capability but no zones specified"
-        zones_effect = enum_spec(None, MultiZoneEffectType, unpacking=True).normalise(
-            meta, zones_effect
-        )
+        zones_effect = enum_spec(MultiZoneEffectType, unpacking=True).normalise(meta, zones_effect)
         responders.append(ZonesResponder(zones=zones, zones_effect=zones_effect))
 
     if cap.has_matrix:
@@ -457,7 +455,7 @@ def default_responders(
         if not cap.has_chain:
             kw["chain_length"] = 1
 
-        kw["matrix_effect"] = enum_spec(None, TileEffectType, unpacking=True).normalise(
+        kw["matrix_effect"] = enum_spec(TileEffectType, unpacking=True).normalise(
             meta, matrix_effect
         )
 
